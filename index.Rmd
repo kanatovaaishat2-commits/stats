@@ -1,0 +1,149 @@
+---
+title: "Predicting Weight Lifting Exercise Quality from Accelerometer Data"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    keep_md: true
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center")
+library(caret)
+library(randomForest)
+library(rpart)
+library(gbm)
+library(ggplot2)
+set.seed(12345)
+```
+
+## 1. Summary
+
+Wearable accelerometers on the belt, forearm, arm and dumbbell of 6 participants recorded barbell lifts performed correctly (class A) and incorrectly in four common ways (classes B to E). The goal is to predict `classe` from the sensor data. I cleaned the data, held out a validation set, compared three model families using 5-fold cross validation, picked the best one, estimated its out-of-sample error on the held-out data, and used it to predict the 20 test cases. Data source: Velloso, E., Bulling, A., Gellersen, H., Ugulino, W., Fuks, H. *Qualitative Activity Recognition of Weight Lifting Exercises.* Proceedings of 4th Augmented Human International Conference, 2013 (groupware.les.inf.puc-rio.br/har).
+
+## 2. Loading the data
+
+```{r load}
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+if (!file.exists("pml-training.csv")) download.file(train_url, "pml-training.csv")
+if (!file.exists("pml-testing.csv"))  download.file(test_url,  "pml-testing.csv")
+
+na_codes <- c("NA", "#DIV/0!", "")
+training_raw <- read.csv("pml-training.csv", na.strings = na_codes)
+testing_raw  <- read.csv("pml-testing.csv",  na.strings = na_codes)
+dim(training_raw); dim(testing_raw)
+```
+
+## 3. Cleaning and feature selection
+
+Choices and reasons:
+
+* The first 7 columns (row id, user name, timestamps, window markers) are bookkeeping, not movement. Using them would let a model "cheat" by recognizing when or by whom a row was recorded, so I removed them.
+* Many columns are summary statistics (kurtosis, skewness, etc.) that are almost entirely `NA` outside of window-end rows. I dropped columns with more than 90% missing values.
+* I dropped near-zero-variance predictors, which carry little information.
+* The same columns are kept in the 20-case test set.
+
+```{r clean}
+train_clean <- training_raw[, -(1:7)]
+na_share <- colMeans(is.na(train_clean))
+train_clean <- train_clean[, na_share < 0.90]
+nzv <- nearZeroVar(train_clean, saveMetrics = TRUE)
+train_clean <- train_clean[, !nzv$nzv]
+train_clean$classe <- factor(train_clean$classe)
+
+predictors <- setdiff(names(train_clean), "classe")
+test_clean <- testing_raw[, predictors]
+length(predictors)
+```
+
+After cleaning, `r length(predictors)` predictors remain, and none have missing values (`r sum(is.na(train_clean))` NAs).
+
+```{r classdist, fig.height=3.5, fig.width=5}
+ggplot(train_clean, aes(classe, fill = classe)) +
+  geom_bar() + theme_minimal() + theme(legend.position = "none") +
+  labs(title = "Figure 1: Class distribution in the training data", x = "classe", y = "count")
+```
+
+The classes are reasonably balanced (A is somewhat more frequent), so plain accuracy is a sensible metric.
+
+## 4. Validation strategy and cross validation
+
+I split the labelled data 70% / 30% into a training set and a validation set. The validation set is never used for fitting or tuning, so its error is an unbiased estimate of the out-of-sample error. Inside the 70% training set I used 5-fold cross validation (`trainControl(method = "cv", number = 5)`) to compare and tune models. 5 folds is a good tradeoff between bias, variance and run time for about 13,700 rows.
+
+```{r split}
+in_train <- createDataPartition(train_clean$classe, p = 0.70, list = FALSE)
+train_set <- train_clean[in_train, ]
+valid_set <- train_clean[-in_train, ]
+ctrl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+```
+
+## 5. Models
+
+I compared three model types. A single decision tree gives an interpretable baseline. Gradient boosting (`gbm`) and random forest are strong, flexible ensembles that need little preprocessing, handle correlated sensor channels, and cope with non-linear relationships.
+
+```{r models, cache=TRUE}
+set.seed(12345)
+fit_tree <- train(classe ~ ., data = train_set, method = "rpart", trControl = ctrl)
+
+set.seed(12345)
+fit_gbm <- train(classe ~ ., data = train_set, method = "gbm",
+                 trControl = ctrl, verbose = FALSE)
+
+set.seed(12345)
+fit_rf <- train(classe ~ ., data = train_set, method = "rf",
+                trControl = ctrl, ntree = 200)
+
+cv_results <- data.frame(
+  Model = c("Decision tree (rpart)", "Boosting (gbm)", "Random forest"),
+  CV_Accuracy = c(max(fit_tree$results$Accuracy),
+                  max(fit_gbm$results$Accuracy),
+                  max(fit_rf$results$Accuracy))
+)
+cv_results$CV_Error <- 1 - cv_results$CV_Accuracy
+cv_results
+```
+
+The random forest has the highest cross-validated accuracy (`r round(max(fit_rf$results$Accuracy), 4)`), so I selected it as the final model.
+
+```{r importance, fig.height=5, fig.width=7}
+imp <- varImp(fit_rf)$importance
+imp$variable <- rownames(imp)
+imp <- head(imp[order(-imp$Overall), ], 15)
+ggplot(imp, aes(reorder(variable, Overall), Overall)) +
+  geom_col(fill = "steelblue") + coord_flip() + theme_minimal() +
+  labs(title = "Figure 2: Top 15 variables (random forest)", x = NULL, y = "Importance")
+```
+
+The most informative variables come mostly from the belt, dumbbell and forearm sensors, which makes physical sense: the way the hips and the weight move is what separates correct from incorrect form.
+
+## 6. Out-of-sample error
+
+```{r valid}
+pred_valid <- predict(fit_rf, valid_set)
+cm <- confusionMatrix(pred_valid, valid_set$classe)
+cm$table
+acc <- unname(cm$overall["Accuracy"])
+```
+
+Accuracy on the held-out validation set is **`r round(acc, 4)`**, so the **expected out-of-sample error is about `r round(1 - acc, 4)` (`r round(100 * (1 - acc), 2)`%)**. The 95% confidence interval for accuracy is `r round(cm$overall["AccuracyLower"], 4)` to `r round(cm$overall["AccuracyUpper"], 4)`. The cross-validation error (`r round(1 - max(fit_rf$results$Accuracy), 4)`) agrees closely with the validation error, which suggests the model is not overfit. Error on the 20 test cases may differ slightly because of small-sample noise (each case is 5% of the total).
+
+```{r cmplot, fig.height=4, fig.width=5}
+cm_df <- as.data.frame(cm$table)
+ggplot(cm_df, aes(Reference, Prediction, fill = Freq)) +
+  geom_tile() + geom_text(aes(label = Freq), size = 3) +
+  scale_fill_gradient(low = "white", high = "steelblue") + theme_minimal() +
+  labs(title = "Figure 3: Validation confusion matrix")
+```
+
+## 7. Predictions for the 20 test cases
+
+```{r predict}
+final_pred <- predict(fit_rf, test_clean)
+data.frame(problem_id = testing_raw$problem_id, prediction = final_pred)
+```
+
+## 8. Conclusion
+
+Careful cleaning (dropping identifiers and mostly-missing columns), a held-out validation set and 5-fold cross validation led to a random forest model with very low estimated out-of-sample error. I chose it over a single tree and boosting because it had the best cross-validated accuracy, and the validation set confirmed that the result generalizes. The 20 test predictions above were submitted to the course prediction quiz.
