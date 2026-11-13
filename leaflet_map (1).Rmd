@@ -1,0 +1,67 @@
+---
+title: "Landmarks of Kazakhstan: An Interactive Leaflet Map"
+author: "Aishat Kanatova"
+date: "November 13, 2026"
+output:
+  html_document:
+    theme: cosmo
+    toc: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+**Date created: November 13, 2026**
+
+This page was built with R Markdown and the `leaflet` package. Click any marker
+to see a popup about the landmark, hover to see its name, and use the mouse wheel
+or the +/- buttons to zoom. The layer control (top right) lets you switch the
+base map.
+
+## The data
+
+```{r data}
+library(leaflet)
+
+landmarks <- data.frame(
+  name = c("Bayterek Tower", "Khan Shatyr", "Hazrat Sultan Mosque",
+           "Big Almaty Lake", "Charyn Canyon", "Baikonur Cosmodrome",
+           "Burabay National Park"),
+  lat  = c(51.1283, 51.1326, 51.1228, 43.0500, 43.3500, 45.9650, 53.0833),
+  lng  = c(71.4305, 71.4036, 71.4721, 76.9833, 79.0833, 63.3050, 70.3000),
+  info = c("Observation tower in Astana symbolizing a mythical tree of life.",
+           "A giant tent-shaped entertainment center in Astana.",
+           "One of the largest mosques in Central Asia.",
+           "A glacial alpine lake in the Trans-Ili Alatau mountains.",
+           "A dramatic canyon often compared to the Grand Canyon.",
+           "The world's first and largest operational space launch facility.",
+           "A scenic area of lakes and granite hills known as the Switzerland of Kazakhstan."),
+  stringsAsFactors = FALSE
+)
+
+knitr::kable(landmarks[, c("name", "info")], col.names = c("Landmark", "Description"))
+```
+
+## The map
+
+```{r map, fig.width=9, fig.height=6}
+popups <- paste0("<b>", landmarks$name, "</b><br/>", landmarks$info)
+
+leaflet(landmarks) %>%
+  addTiles(group = "OpenStreetMap") %>%
+  addProviderTiles(providers$CartoDB.Positron, group = "Light") %>%
+  addProviderTiles(providers$Esri.WorldImagery, group = "Satellite") %>%
+  addMarkers(lng = ~lng, lat = ~lat,
+             popup = popups,
+             label = ~name,
+             clusterOptions = NULL) %>%
+  addCircles(lng = ~lng, lat = ~lat, radius = 25000,
+             color = "#e63946", fillOpacity = 0.15, weight = 1) %>%
+  addMiniMap(toggleDisplay = TRUE, position = "bottomleft") %>%
+  addLayersControl(baseGroups = c("OpenStreetMap", "Light", "Satellite"),
+                   options = layersControlOptions(collapsed = FALSE)) %>%
+  setView(lng = 67, lat = 48, zoom = 4)
+```
+
+*Map tiles by OpenStreetMap, CartoDB and Esri. Created in R Markdown with Leaflet on November 13, 2026.*
