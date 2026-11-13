@@ -1,0 +1,80 @@
+---
+title: "Cars, Power and Efficiency: An Interactive Plotly Presentation"
+author: "Aishat Kanatova"
+date: "November 13, 2026"
+output:
+  ioslides_presentation:
+    widescreen: true
+    smaller: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(plotly)
+```
+
+## About this presentation
+
+**Date created: November 13, 2026**
+
+This slide deck was built with R Markdown (`ioslides_presentation`) and the
+`plotly` package.
+
+- Plots are fully interactive: hover for details, zoom, pan, and click legend items
+- Data: the built-in `mtcars` dataset (1974 Motor Trend road tests)
+- Question: how do engine power and weight relate to fuel economy?
+
+## Fuel economy vs. weight
+
+```{r plot1}
+mtcars$cyl_f <- factor(mtcars$cyl)
+mtcars$car <- rownames(mtcars)
+
+plot_ly(mtcars, x = ~wt, y = ~mpg, color = ~cyl_f,
+        colors = c("#2a9d8f", "#e9c46a", "#e63946"),
+        type = "scatter", mode = "markers",
+        size = ~hp, sizes = c(10, 40),
+        marker = list(opacity = 0.75, line = list(width = 1, color = "white")),
+        text = ~paste0("<b>", car, "</b><br>", hp, " hp"),
+        hoverinfo = "text+x+y",
+        height = 430) %>%
+  layout(title = "Heavier cars use more fuel (bubble size = horsepower)",
+         xaxis = list(title = "Weight (1000 lbs)"),
+         yaxis = list(title = "Miles per gallon"),
+         legend = list(title = list(text = "Cylinders")))
+```
+
+## Efficiency by cylinder count
+
+```{r plot2}
+plot_ly(mtcars, x = ~cyl_f, y = ~mpg, color = ~cyl_f,
+        colors = c("#2a9d8f", "#e9c46a", "#e63946"),
+        type = "box", boxpoints = "all", jitter = 0.4, pointpos = 0,
+        height = 430) %>%
+  layout(title = "Fewer cylinders, better mileage",
+         xaxis = list(title = "Cylinders"),
+         yaxis = list(title = "Miles per gallon"),
+         showlegend = FALSE)
+```
+
+## Three variables at once (rotate me!)
+
+```{r plot3}
+plot_ly(mtcars, x = ~wt, y = ~hp, z = ~mpg, color = ~cyl_f,
+        colors = c("#2a9d8f", "#e9c46a", "#e63946"),
+        type = "scatter3d", mode = "markers",
+        marker = list(size = 5),
+        text = ~car, hoverinfo = "text",
+        height = 430) %>%
+  layout(scene = list(xaxis = list(title = "Weight"),
+                      yaxis = list(title = "Horsepower"),
+                      zaxis = list(title = "MPG")))
+```
+
+## Conclusions
+
+- Weight and horsepower both go with lower fuel economy
+- Four-cylinder cars are the most efficient on average
+- Interactive plots make it easy to explore individual cars
+
+<small>Created by Aishat Kanatova in R Markdown with Plotly on November 13, 2026.</small>
