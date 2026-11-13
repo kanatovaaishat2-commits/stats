@@ -1,0 +1,152 @@
+---
+title: "Milestone Report: Exploring the SwiftKey Text Data"
+author: "Aishat Kanatova"
+date: "November 14, 2026"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE)
+library(stringi)
+library(ggplot2)
+library(knitr)
+set.seed(2026)
+```
+
+## 1. Goal of this report
+
+The final product will be a **Shiny app that predicts the next word** a person is about to type, like the keyboard on a phone.
+This report shows that the data is loaded, summarizes what is in it, and explains the plan for the prediction algorithm and the app.
+
+## 2. The data
+
+The data comes from the HC Corpora collection (provided through the SwiftKey capstone course). It has three English (en_US) text files: **blogs**, **news articles**, and **Twitter posts**.
+
+```{r load}
+dir_path <- "final/en_US"
+if (!dir.exists(dir_path)) {
+  url <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+  download.file(url, "swiftkey.zip", mode = "wb")
+  unzip("swiftkey.zip")
+}
+
+read_txt <- function(f) readLines(file.path(dir_path, f), encoding = "UTF-8", skipNul = TRUE, warn = FALSE)
+blogs   <- read_txt("en_US.blogs.txt")
+news    <- read_txt("en_US.news.txt")
+twitter <- read_txt("en_US.twitter.txt")
+sources <- list(Blogs = blogs, News = news, Twitter = twitter)
+```
+
+## 3. Basic summary of the three files
+
+```{r summary-table}
+files <- c(Blogs = "en_US.blogs.txt", News = "en_US.news.txt", Twitter = "en_US.twitter.txt")
+words_per_line <- lapply(sources, stri_count_words)
+
+summary_df <- data.frame(
+  Source = names(sources),
+  `File size (MB)` = round(sapply(files, function(f) file.info(file.path(dir_path, f))$size) / 1024^2, 1),
+  Lines = sapply(sources, length),
+  `Total words` = sapply(words_per_line, sum),
+  `Avg words per line` = round(sapply(words_per_line, mean), 1),
+  `Longest line (characters)` = sapply(sources, function(x) max(nchar(x))),
+  check.names = FALSE, row.names = NULL
+)
+kable(summary_df, format.args = list(big.mark = ","), align = "lrrrrr")
+```
+
+**What this tells us:** the three sources are very different in style. Blog posts and news articles have long lines, while tweets are short because of the character limit.
+
+## 4. How long are the lines?
+
+```{r hist-words, fig.height=4.5, fig.width=9}
+plot_df <- do.call(rbind, lapply(names(words_per_line), function(n) {
+  w <- words_per_line[[n]]
+  data.frame(Source = n, Words = sample(w, min(100000, length(w))))
+}))
+cap <- quantile(plot_df$Words, 0.99)
+ggplot(subset(plot_df, Words <= cap), aes(x = Words, fill = Source)) +
+  geom_histogram(bins = 40, show.legend = FALSE) +
+  facet_wrap(~Source, scales = "free_y") +
+  labs(title = "Number of words per line", x = "Words in a line", y = "Number of lines") +
+  theme_minimal()
+```
+
+Tweets are short and bunched at the left. Blogs and news have a long tail of lengthy lines (the top 1% is trimmed here so the shapes are visible).
+
+## 5. Which words and phrases are most common?
+
+Because the files are huge, the word analysis uses a **random 5% sample** of every file, combined into one training sample. Text is lower-cased and punctuation is removed.
+
+```{r ngrams}
+samp <- unlist(lapply(sources, function(x) sample(x, floor(length(x) * 0.05))), use.names = FALSE)
+samp <- stri_trans_tolower(samp)
+tok <- stri_extract_all_words(samp)
+tok <- lapply(tok, function(w) w[!is.na(w)])
+
+make_ngrams <- function(tok, n) {
+  unlist(lapply(tok, function(w) {
+    if (length(w) < n) return(character(0))
+    do.call(paste, c(lapply(1:n, function(i) w[i:(length(w) - n + i)]), sep = " "))
+  }), use.names = FALSE)
+}
+freq_table <- function(x) {
+  t <- sort(table(x), decreasing = TRUE)
+  data.frame(ngram = names(t), count = as.integer(t), stringsAsFactors = FALSE)
+}
+uni <- freq_table(make_ngrams(tok, 1))
+bi  <- freq_table(make_ngrams(tok, 2))
+tri <- freq_table(make_ngrams(tok, 3))
+```
+
+```{r top-plots, fig.height=4, fig.width=9}
+top_plot <- function(df, title, n = 15) {
+  d <- head(df, n)
+  d$ngram <- factor(d$ngram, levels = rev(d$ngram))
+  ggplot(d, aes(x = ngram, y = count)) +
+    geom_col(fill = "#2a9d8f") + coord_flip() +
+    labs(title = title, x = NULL, y = "Frequency in sample") + theme_minimal()
+}
+top_plot(uni, "Top 15 single words")
+top_plot(bi,  "Top 15 two-word phrases")
+top_plot(tri, "Top 15 three-word phrases")
+```
+
+## 6. How many words do we really need?
+
+```{r coverage, fig.height=4, fig.width=7}
+cum <- cumsum(uni$count) / sum(uni$count)
+n50 <- which(cum >= 0.5)[1]
+n90 <- which(cum >= 0.9)[1]
+cov_df <- data.frame(words = seq_along(cum), coverage = cum)
+ggplot(subset(cov_df, words <= 20000), aes(words, coverage)) +
+  geom_line(color = "#e63946", linewidth = 1) +
+  geom_hline(yintercept = c(0.5, 0.9), linetype = "dashed") +
+  labs(title = "Share of all text covered by the most common words",
+       x = "Number of distinct words (most common first)", y = "Share of all words") +
+  scale_y_continuous(labels = scales::percent) + theme_minimal()
+```
+
+Only **`r format(n50, big.mark = ",")` distinct words** cover half of everything people write, and **`r format(n90, big.mark = ",")`** cover 90%.
+Out of `r format(nrow(uni), big.mark = ",")` distinct words in the sample, most appear only once or twice.
+
+## 7. Interesting findings
+
+- A small set of very common words ("the", "to", "and", "a", ...) makes up a large share of all text.
+- Tweets are short and informal, while blogs and news are longer and more formal, so the mix of sources matters.
+- Phrases repeat a lot ("one of the", "thanks for the"), which is exactly what a next-word predictor can learn from.
+- The data contains misspellings, numbers, and some offensive words, which need cleaning or filtering.
+
+## 8. Plan for the prediction algorithm and the Shiny app
+
+1. **Clean the text:** lower-case, remove numbers and odd symbols, and filter profanity so the app never suggests it.
+2. **Build n-gram tables:** count the most frequent 1-, 2-, 3- and 4-word sequences from a larger sample and drop very rare ones to keep the model small and fast.
+3. **Predict the next word:** look at the last few words typed and find the most likely next word. If the full phrase was never seen, "back off" to a shorter phrase (Stupid Backoff / Katz backoff).
+4. **Test it:** measure accuracy on text the model has not seen, and balance accuracy against speed and memory size.
+5. **Shiny app:** a simple text box where the user types a phrase and instantly sees the top 3 suggested next words. The app will include short instructions for first-time users.
+
+**Questions for feedback:** Is a top-3 suggestion list the right interface? Is a small, fast model preferred over a slightly more accurate but heavier one?
